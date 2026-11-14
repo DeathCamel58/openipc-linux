@@ -231,10 +231,11 @@ static const struct hisi_gate_clock hi3520dv100_gate_clks[] = {
 	{ HI3520DV100_SSP_CLK, "clk_ssp", "apb", 0, 0xe4, 13, 0, },
 	{ HI3520DV100_IR_CLK, "clk_ir", "apb", 0, 0xe4, 12, 0, },
 	/*
-	 * The boot flash holds the root file system and the SFC driver does
-	 * not claim this clock yet, so the unused-clock cleanup must not stop it.
+	 * A driver that claims this clock can gate it, but the cleanup of unused
+	 * clocks must not stop the boot flash of a device tree whose SFC node
+	 * has no clock (the earlier description of the controller).
 	 */
-	{ HI3520DV100_SFC_CLK, "clk_sfc", "sfc_mux", CLK_IS_CRITICAL, 0xc0, 1, 0, },
+	{ HI3520DV100_SFC_CLK, "clk_sfc", "sfc_mux", CLK_IGNORE_UNUSED, 0xc0, 1, 0, },
 	{ HI3520DV100_ETH_CLK, "clk_eth", NULL, 0, 0xcc, 1, 0, },
 	{ HI3520DV100_USB_CLK, "clk_usb", "24m", 0, 0xb8, 7, 0, },
 	/* sata_cken: PHY and bus clock of the SATA block, selected by sata_mux */
