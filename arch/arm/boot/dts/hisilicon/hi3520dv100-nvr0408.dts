@@ -39,12 +39,12 @@
  */
 &sfc {
 	status = "okay";
+	assigned-clock-parents = <&crg HI3520DV100_FIXED_112P5M>;
 
 	flash@1 {
 		compatible = "jedec,spi-nor";
 		reg = <1>;
 		label = "hi_sfc";
-		spi-max-frequency = <50000000>;
 		spi-rx-bus-width = <2>;
 	};
 };
