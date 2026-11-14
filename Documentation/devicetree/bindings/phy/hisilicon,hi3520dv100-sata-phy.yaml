@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/hisilicon,hi3520dv100-sata-phy.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: HiSilicon Hi3520D V100 SATA PHY
+
+maintainers:
+  - Dylan Corrales <deathcamel58@gmail.com>
+
+description:
+  The two-port SATA PHY of the Hi3520D V100. It is configured through
+  registers inside the register window of the AHCI controller (PHY control,
+  OOB control and the per-port FIFOTH and PHYCTL registers) and has a reset
+  bit of its own in the SATA clock and reset register of the CRG. One node
+  serves all ports; their number is the size of the "ports" window divided
+  by 0x80.
+
+properties:
+  compatible:
+    const: hisilicon,hi3520dv100-sata-phy
+
+  reg:
+    items:
+      - description: Global PHY control registers (SATA_TM to SATA_OOB_CTL)
+      - description:
+          Per-port register blocks, 0x80 bytes per port starting at the first
+          port
+
+  reg-names:
+    items:
+      - const: ctrl
+      - const: ports
+
+  '#phy-cells':
+    const: 0
+
+  resets:
+    items:
+      - description: PHY reset (PERI_CRG45 bit 0)
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - '#phy-cells'
+  - resets
+
+additionalProperties: false
+
+examples:
+  - |
+    phy@10080050 {
+        compatible = "hisilicon,hi3520dv100-sata-phy";
+        reg = <0x10080050 0x28>, <0x10080100 0x100>;
+        reg-names = "ctrl", "ports";
+        #phy-cells = <0>;
+        resets = <&crg 0xb4 0>;
+    };
