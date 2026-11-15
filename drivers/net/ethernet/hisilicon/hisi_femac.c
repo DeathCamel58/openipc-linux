@@ -53,6 +53,8 @@
 #define GLB_HOSTMAC_H16			0x0004
 #define GLB_SOFT_RESET			0x0008
 #define SOFT_RESET_ALL			BIT(0)
+#define GLB_ENDIAN_MOD			0x0018
+#define ENDIAN_MOD_LITTLE		(BIT(1) | BIT(0))
 #define GLB_FWCTRL			0x0010
 #define FWCTRL_VLAN_ENABLE		BIT(0)
 #define FWCTRL_FW2CPU_ENA		BIT(5)
@@ -863,6 +865,17 @@ static void hisi_femac_port_init(struct hisi_femac_priv *priv)
 	if (priv->ndev->phydev->interface == PHY_INTERFACE_MODE_RMII)
 		val |= MAC_PORTSEL_RMII;
 	writel(val, priv->port_base + MAC_PORTSEL);
+
+	/*
+	 * Packet data endianness of the RX write and TX read DMA. The reset
+	 * value is little endian, but a boot loader may have changed it and
+	 * the register is not reset by the port soft reset: set it.
+	 */
+	val = readl(priv->glb_base + GLB_ENDIAN_MOD);
+	val &= ~ENDIAN_MOD_LITTLE;
+	if (!IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
+		val |= ENDIAN_MOD_LITTLE;
+	writel(val, priv->glb_base + GLB_ENDIAN_MOD);
 
 	/*clear all interrupt status */
 	writel(IRQ_ENA_PORT0_MASK, priv->glb_base + GLB_IRQ_RAW);
