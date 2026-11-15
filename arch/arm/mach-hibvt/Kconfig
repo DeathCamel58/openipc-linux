@@ -59,9 +59,12 @@ config ARCH_HI3516CV100
 	help
 		Support for HiSilicon Hi3516CV100 / Hi3518CV100 / Hi3518EV100
 		V1 camera SoC family (ARM926EJ-S single-core, ARMv5TE).
-		Shares the V2 (Hi3516CV200) CRG driver — register layouts
-		match; VIC base is the only relevant MMIO difference,
-		overridden in the cv100 DTSI.
+		Includes the V2 (Hi3516CV200) device tree and so uses its CRG
+		driver, but the V1 CRG register map is a different one
+		(no CPU and bus select, no UART select, other SFC and MMC
+		selects, another APB clock), so the clocks of this family,
+		the console and timer clocks among them, are not described
+		correctly until it has a clock driver of its own.
 
 config ARCH_HI3516AV100
 	bool "Hisilicon Hi3516AV100 / Hi3516DV100 Cortex-A7 family"
