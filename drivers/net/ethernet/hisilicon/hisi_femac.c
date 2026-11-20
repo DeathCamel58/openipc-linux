@@ -35,9 +35,16 @@
 #define BIT_CNTR_RDCLR_EN		BIT(27)
 #define BIT_CNTR_CLR_ALL		BIT(26)
 #define BIT_CNTR_ROLL_DIS		BIT(25)
+#define FC_LEVEL			0x0348
+#define FC_QLIMIT_DOWN_MASK		GENMASK(5, 0)
+#define FC_QLIMIT_UP_MASK		GENMASK(13, 8)
+#define FC_QLIMIT_ENA			BIT(14)
+#define FC_QLIMIT_DOWN			8	/* the reset values */
+#define FC_QLIMIT_UP			5
 #define RX_COALESCE_SET			0x0340
 #define RX_COALESCED_FRAME_OFFSET	24
 #define RX_COALESCED_FRAMES		8
+#define RX_COALESCED_FRAMES_MAX		31
 #define RX_COALESCED_TIMER		0x74
 #define QLEN_SET			0x0344
 #define RX_DEPTH_OFFSET			8
@@ -192,6 +199,8 @@ struct hisi_femac_priv {
 	struct reset_control *mac_rst;
 	struct reset_control *phy_rst;
 	u32 phy_reset_delays[DELAYS_NUM];
+	u32 rx_coalesce_frames;
+	bool tx_pause;
 	u32 link_status;
 
 	struct device *dev;
@@ -1038,7 +1047,101 @@ static void hisi_femac_get_pause_stats(struct net_device *dev,
 	mutex_unlock(&priv->stats_lock);
 }
 
+/*
+ * The MAC sends a pause frame when the receive queue fills up, if both the
+ * pause transmit enable (MAC_SET[18], on after reset) and the traffic
+ * control of the queue (FC_LEVEL.qlimit_ena, off after reset) are set. The
+ * thresholds of the queue are written as well, with their reset values.
+ */
+static void hisi_femac_write_tx_pause(struct hisi_femac_priv *priv)
+{
+	u32 val;
+
+	val = readl(priv->port_base + MAC_SET);
+	if (priv->tx_pause)
+		val |= BIT_PAUSE_EN;
+	else
+		val &= ~BIT_PAUSE_EN;
+	writel(val, priv->port_base + MAC_SET);
+
+	val = readl(priv->port_base + FC_LEVEL);
+	val &= ~(FC_QLIMIT_DOWN_MASK | FC_QLIMIT_UP_MASK | FC_QLIMIT_ENA);
+	val |= FC_QLIMIT_DOWN | (FC_QLIMIT_UP << 8);
+	if (priv->tx_pause)
+		val |= FC_QLIMIT_ENA;
+	writel(val, priv->port_base + FC_LEVEL);
+}
+
+/*
+ * There is no documented control for honoring received pause frames and no
+ * negotiation, so only "tx on|off" is accepted, and rx is reported as off
+ * although the MAC may honor received pause frames. The setting is kept in
+ * the private data and written again by port_init(), so it survives a power
+ * loss of the block.
+ */
+static void hisi_femac_get_pauseparam(struct net_device *dev,
+				      struct ethtool_pauseparam *pause)
+{
+	struct hisi_femac_priv *priv = netdev_priv(dev);
+
+	pause->autoneg = 0;
+	pause->rx_pause = 0;
+	pause->tx_pause = priv->tx_pause;
+}
+
+static int hisi_femac_set_pauseparam(struct net_device *dev,
+				     struct ethtool_pauseparam *pause)
+{
+	struct hisi_femac_priv *priv = netdev_priv(dev);
+
+	if (pause->autoneg || pause->rx_pause)
+		return -EOPNOTSUPP;
+
+	priv->tx_pause = pause->tx_pause;
+	hisi_femac_write_tx_pause(priv);
+
+	return 0;
+}
+
+/*
+ * Only the frame count of the multi-packet RX interrupt is configurable in
+ * a known unit; the aging timer counts main clock cycles / 256 and the
+ * clock rate is not known to the clock driver, so it stays at its default.
+ * The value is written by port_init() as well, so it survives a power loss.
+ */
+static int hisi_femac_get_coalesce(struct net_device *dev,
+				   struct ethtool_coalesce *ec,
+				   struct kernel_ethtool_coalesce *kernel_coal,
+				   struct netlink_ext_ack *extack)
+{
+	struct hisi_femac_priv *priv = netdev_priv(dev);
+
+	ec->rx_max_coalesced_frames = priv->rx_coalesce_frames;
+
+	return 0;
+}
+
+static int hisi_femac_set_coalesce(struct net_device *dev,
+				   struct ethtool_coalesce *ec,
+				   struct kernel_ethtool_coalesce *kernel_coal,
+				   struct netlink_ext_ack *extack)
+{
+	struct hisi_femac_priv *priv = netdev_priv(dev);
+
+	if (ec->rx_max_coalesced_frames < 1 ||
+	    ec->rx_max_coalesced_frames > RX_COALESCED_FRAMES_MAX)
+		return -EINVAL;
+
+	priv->rx_coalesce_frames = ec->rx_max_coalesced_frames;
+	writel(RX_COALESCED_TIMER |
+	       (priv->rx_coalesce_frames << RX_COALESCED_FRAME_OFFSET),
+	       priv->port_base + RX_COALESCE_SET);
+
+	return 0;
+}
+
 static const struct ethtool_ops hisi_femac_ethtools_ops = {
+	.supported_coalesce_params = ETHTOOL_COALESCE_RX_MAX_FRAMES,
 	.get_link		= ethtool_op_get_link,
 	.get_ts_info		= ethtool_op_get_ts_info,
 	.get_link_ksettings	= phy_ethtool_get_link_ksettings,
@@ -1048,6 +1151,11 @@ static const struct ethtool_ops hisi_femac_ethtools_ops = {
 	.get_ethtool_stats	= hisi_femac_get_ethtool_stats,
 	.get_eth_mac_stats	= hisi_femac_get_eth_mac_stats,
 	.get_pause_stats	= hisi_femac_get_pause_stats,
+	.nway_reset		= phy_ethtool_nway_reset,
+	.get_pauseparam		= hisi_femac_get_pauseparam,
+	.set_pauseparam		= hisi_femac_set_pauseparam,
+	.get_coalesce		= hisi_femac_get_coalesce,
+	.set_coalesce		= hisi_femac_set_coalesce,
 };
 
 static const struct net_device_ops hisi_femac_netdev_ops = {
@@ -1140,9 +1248,10 @@ static void hisi_femac_port_init(struct hisi_femac_priv *priv)
 	/* A read does not clear the counters, and they wrap, whatever was left */
 	val &= ~(BIT_CNTR_RDCLR_EN | BIT_CNTR_CLR_ALL | BIT_CNTR_ROLL_DIS);
 	writel(val, priv->port_base + MAC_SET);
+	hisi_femac_write_tx_pause(priv);
 
 	val = RX_COALESCED_TIMER |
-		(RX_COALESCED_FRAMES << RX_COALESCED_FRAME_OFFSET);
+		(priv->rx_coalesce_frames << RX_COALESCED_FRAME_OFFSET);
 	writel(val, priv->port_base + RX_COALESCE_SET);
 
 	val = (HW_RX_FIFO_DEPTH << RX_DEPTH_OFFSET) | HW_TX_FIFO_DEPTH;
@@ -1288,6 +1397,13 @@ static int hisi_femac_drv_probe(struct platform_device *pdev)
 			 ndev->dev_addr);
 	}
 
+	priv->rx_coalesce_frames = RX_COALESCED_FRAMES;
+	/*
+	 * No pause frames unless asked for with ethtool -A: the driver never
+	 * sent any, and the MAC does not check what the link partner
+	 * negotiated or whether the link is half duplex.
+	 */
+	priv->tx_pause = false;
 	u64_stats_init(&priv->tx_syncp);
 	u64_stats_init(&priv->rx_syncp);
 	mutex_init(&priv->stats_lock);
@@ -1420,10 +1536,10 @@ static int hisi_femac_drv_resume(struct platform_device *pdev)
 	/* The counters may have been cleared by the power loss, also if down */
 	hisi_femac_stats_baseline(priv);
 
-	if (netif_running(ndev)) {
-		hisi_femac_port_init(priv);
+	/* Also when down: the settings must be back before the next open */
+	hisi_femac_port_init(priv);
+	if (netif_running(ndev))
 		hisi_femac_net_open(ndev);
-	}
 	netif_device_attach(ndev);
 
 	return 0;
